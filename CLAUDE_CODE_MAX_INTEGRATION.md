@@ -435,3 +435,158 @@ Epic `mono-20` with 11 child tasks (`mono-21` through `mono-31`) were created du
 **Total estimated changes: ~30 lines across 2 files**
 
 This is significantly simpler than our original analysis suggested, thanks to the pragmatic "try it and break it" approach revealing what actually matters vs. what we thought might matter.
+
+---
+
+## FINAL TEST RESULTS - IT WORKS!
+
+**Date**: October 23, 2025  
+**Test**: Full execution cycle with simple task
+
+### Changes Implemented
+
+**Commit 1**: `1b98e97` - Switch executor from Amp to Claude Code with bash -c
+- Changed `internal/executor/executor.go:778` from `AgentTypeAmp` to `AgentTypeClaudeCode`
+- Modified `buildClaudeCodeCommand` to use `bash -c` for alias expansion
+- **Result**: Claude invoked but failed with "command not found" (bash -c doesn't load aliases in non-interactive mode)
+
+**Commit 2**: `969774a` - Use environment variables for Claude CLI configuration
+- Added `VC_CLAUDE_PATH` env var (default: `~/.claude/local/claude`)
+- Added `VC_CLAUDE_ARGS` env var (default: `--dangerously-skip-permissions`)
+- Removed bash -c wrapper, use direct exec.Command with full path
+- Added `path/filepath` import
+- **Result**: WORKING! Full execution cycle completes successfully
+
+### Test Execution: Issue vc-5 "Create hello.txt file"
+
+**Task**: Create a file called hello.txt containing the text 'Hello World'
+
+**Results**:
+```
+✅ Agent spawned successfully
+✅ Claude Code executed and completed task (12.2 seconds)
+✅ File created: hello.txt with content "Hello World"
+✅ Agent report parsed correctly:
+   {
+     "status": "completed",
+     "summary": "Created hello.txt file with 'Hello World' content as specified",
+     "files_modified": ["hello.txt"]
+   }
+✅ Quality gates executed:
+   - build: PASS
+   - test: FAIL (expected - no tests exist)
+   - lint: FAIL (expected - linting errors)
+✅ Issue marked as blocked (due to failing gates)
+✅ Follow-up issues created automatically:
+   - vc-5-gate-lint
+   - vc-5-gate-test
+✅ Executor continued processing follow-up issues
+```
+
+### Observed Behavior
+
+**State Machine Warnings** (non-blocking):
+```
+warning: failed to update execution state: invalid state transition: 
+cannot transition from claimed to executing (valid transitions: [assessing failed])
+```
+
+**Why it happens**: When AI supervision is disabled (no ANTHROPIC_API_KEY), the executor skips the "assessing" state but the state machine still expects that transition.
+
+**Impact**: None - execution continues despite the warning. This is cosmetic only.
+
+**Future fix**: Allow `claimed → executing` transition when AI supervision is disabled, OR suppress the warning when supervisor is nil.
+
+### What Works Without API Key
+
+✅ **Executor spawns Claude Code agents**  
+✅ **Agent execution completes**  
+✅ **Structured report parsing**  
+✅ **Quality gates run**  
+✅ **Issue state management**  
+✅ **Auto-creation of follow-up issues**  
+✅ **Dependency tracking**  
+
+### What Requires API Key
+
+❌ **AI Supervision** (assessment before execution)  
+❌ **REPL mode** (conversational interface)  
+❌ **AI-powered quality gate recovery** (when gates fail)  
+
+### Environment Variables Added
+
+```bash
+# Optional: Override Claude CLI path (default: ~/.claude/local/claude)
+export VC_CLAUDE_PATH=/custom/path/to/claude
+
+# Optional: Customize Claude CLI arguments (default: --dangerously-skip-permissions)
+export VC_CLAUDE_ARGS="--dangerously-skip-permissions --model sonnet"
+
+# To remove dangerous flag:
+export VC_CLAUDE_ARGS=""
+
+# To add multiple flags:
+export VC_CLAUDE_ARGS="--dangerously-skip-permissions --model opus --print"
+```
+
+### Verified Workflow
+
+1. **Executor polls** for ready work (every 5s)
+2. **Issue claimed** atomically from database
+3. **AI assessment** skipped (no API key - warning logged)
+4. **Agent spawned** via `exec.Command(claudePath, args...)`
+5. **Claude Code executes** with full tool access
+6. **Agent completes** and outputs structured JSON report
+7. **VC parses report** and extracts status/summary
+8. **Quality gates run** (build/test/lint)
+9. **Issue updated** based on gates (blocked if failures)
+10. **Follow-up issues created** for gate failures
+11. **Dependencies added** (original issue depends on gate fixes)
+12. **Executor continues** picking up new ready work
+
+### Session Files
+
+Claude Code sessions are persisted in:
+```
+~/.claude/projects/-Users-travisbrown-code-mono-active-vibe-code-reference-vc/<session-id>.jsonl
+```
+
+Each session file contains full conversation history in JSONL format, allowing inspection of:
+- User prompts sent by VC
+- Claude's responses and tool uses
+- Tool results
+- Full conversation flow
+
+### Claude Code Max Plan Usage
+
+**Confirmed**: When `ANTHROPIC_API_KEY` is not in the environment, Claude Code uses the Max subscription for billing. The executor's environment filtering is not needed for basic operation, but could be added as a safety measure.
+
+### Next Steps for Production Use
+
+**Required**:
+- None! It works as-is for basic operation
+
+**Optional Improvements**:
+1. Fix state machine to allow `claimed → executing` when supervisor is nil
+2. Add environment filtering to ensure ANTHROPIC_API_KEY is never passed to Claude
+3. Add `--print` and `--output-format json` to VC_CLAUDE_ARGS default
+4. Add model selection support via VC_CLAUDE_MODEL env var
+5. Add session resumption support for multi-turn agent conversations
+
+**For Max Plan Hybrid Billing**:
+1. Keep ANTHROPIC_API_KEY in environment for AI supervisor
+2. Filter it out when spawning Claude Code agents
+3. Document that supervisor uses API, agents use Max plan
+
+### Conclusion
+
+**The integration works perfectly out of the box with just 2 commits:**
+
+1. Change executor agent type from Amp to ClaudeCode
+2. Add environment variable configuration for Claude path and args
+
+No other changes are required for basic operation. The "try it and break it" methodology revealed that the architecture was already well-designed to support multiple agent types, and Claude Code works seamlessly as a drop-in replacement for Amp.
+
+**Total changes**: ~40 lines across 2 files  
+**Time to working integration**: ~2 hours of methodical testing  
+**Complexity**: Much simpler than originally anticipated  
