@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/steveyegge/vc/internal/types"
 )
 
@@ -44,33 +43,11 @@ func (s *Supervisor) AnalyzeExecutionResult(ctx context.Context, issue *types.Is
 	// Build the prompt for analysis
 	prompt := s.buildAnalysisPrompt(issue, agentOutput, success)
 
-	// Call Anthropic API with retry logic
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "analysis", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model),
-			MaxTokens: 4096,
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	model := getModelForCLI(s.model)
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "analysis", prompt, model)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return nil, fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response as JSON using resilient parser
@@ -96,11 +73,11 @@ func (s *Supervisor) AnalyzeExecutionResult(ctx context.Context, issue *types.Is
 
 	// Log the analysis
 	duration := time.Since(startTime)
-	fmt.Printf("AI Analysis for %s: completed=%v, discovered=%d issues, quality=%d issues, duration=%v\n",
+	fmt.Printf("AI Analysis for %s: completed=%v, discovered=%d issues, quality=%d issues, duration=%v (via Claude CLI)\n",
 		issue.ID, analysis.Completed, len(analysis.DiscoveredIssues), len(analysis.QualityIssues), duration)
 
 	// Log AI usage to events
-	if err := s.logAIUsage(ctx, issue.ID, "analysis", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, issue.ID, "analysis", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 
