@@ -775,7 +775,7 @@ func (e *Executor) executeIssue(ctx context.Context, issue *types.Issue) error {
 	agentID := uuid.New().String()
 
 	agentCfg := AgentConfig{
-		Type:       AgentTypeAmp, // Use Amp for structured JSON events (vc-236)
+		Type:       AgentTypeClaudeCode, // Changed from AgentTypeAmp to use Claude Code
 		WorkingDir: workingDir,
 		Issue:      issue,
 		StreamJSON: true, // Enable --stream-json for structured events (vc-236)

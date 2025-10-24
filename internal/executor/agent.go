@@ -484,10 +484,10 @@ func buildClaudeCodeCommand(cfg AgentConfig, prompt string) *exec.Cmd {
 	//    and the results go through quality gates before being committed
 	args = append(args, "--dangerously-skip-permissions")
 
-	// Claude Code uses the message directly
-	args = append(args, prompt)
-
-	return exec.Command("claude", args...)
+	// Use bash -c to invoke claude alias (aliases don't work with exec.Command directly)
+	// Pass prompt as $1 to avoid shell injection issues
+	cmdStr := "claude --dangerously-skip-permissions \"$1\""
+	return exec.Command("bash", "-c", cmdStr, "--", prompt)
 }
 
 // buildAmpCommand constructs the Sourcegraph amp CLI command
