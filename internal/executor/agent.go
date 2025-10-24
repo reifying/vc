@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -474,20 +475,32 @@ func shouldSkipTool(toolName string) bool {
 
 // buildClaudeCodeCommand constructs the Claude Code CLI command
 func buildClaudeCodeCommand(cfg AgentConfig, prompt string) *exec.Cmd {
-	args := []string{}
+	// Get Claude CLI path from environment, default to standard location
+	// VC_CLAUDE_PATH allows users to override if Claude is installed elsewhere
+	claudePath := os.Getenv("VC_CLAUDE_PATH")
+	if claudePath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			// Fallback if we can't get home directory
+			claudePath = "claude"
+		} else {
+			claudePath = filepath.Join(home, ".claude", "local", "claude")
+		}
+	}
 
-	// Always bypass permission checks for autonomous agent operation (vc-117)
-	// This is required for VC to operate autonomously without human intervention
-	// Safe because:
-	// 1. When sandboxed: Isolated environment with no risk to main codebase
-	// 2. When not sandboxed: VC is designed to work autonomously on its own codebase
-	//    and the results go through quality gates before being committed
-	args = append(args, "--dangerously-skip-permissions")
+	// Get additional Claude args from environment
+	// VC_CLAUDE_ARGS allows users to customize (e.g., remove --dangerously-skip-permissions, add --model, etc.)
+	// Default: --dangerously-skip-permissions for autonomous operation (vc-117)
+	argsEnv := os.Getenv("VC_CLAUDE_ARGS")
+	if argsEnv == "" {
+		argsEnv = "--dangerously-skip-permissions"
+	}
 
-	// Use bash -c to invoke claude alias (aliases don't work with exec.Command directly)
-	// Pass prompt as $1 to avoid shell injection issues
-	cmdStr := "claude --dangerously-skip-permissions \"$1\""
-	return exec.Command("bash", "-c", cmdStr, "--", prompt)
+	// Build command arguments
+	args := strings.Fields(argsEnv)
+	args = append(args, prompt)
+
+	return exec.Command(claudePath, args...)
 }
 
 // buildAmpCommand constructs the Sourcegraph amp CLI command
