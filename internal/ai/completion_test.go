@@ -2,10 +2,8 @@ package ai
 
 import (
 	"context"
-	"strings"
 	"testing"
 
-	"github.com/steveyegge/vc/internal/storage/sqlite"
 	"github.com/steveyegge/vc/internal/types"
 )
 
@@ -185,56 +183,11 @@ func TestAssessCompletion_EmptyChildren(t *testing.T) {
 }
 
 func TestAssessCompletion_ErrorHandling(t *testing.T) {
-	// Create supervisor with invalid API key to force errors
-	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create test store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
-	cfg := &Config{
-		Store:  store,
-		APIKey: "invalid-key-should-fail",
-		Retry:  DefaultRetryConfig(),
-	}
-
-	supervisor, err := NewSupervisor(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create supervisor: %v", err)
-	}
-
-	epic := &types.Issue{
-		ID:                 "vc-test-error",
-		Title:              "Error handling test",
-		Description:        "Testing error handling",
-		IssueType:          types.TypeEpic,
-		Status:             types.StatusOpen,
-		AcceptanceCriteria: "Test complete",
-	}
-
-	children := []*types.Issue{
-		{
-			ID:        "vc-test-child",
-			Title:     "Child task",
-			Status:    types.StatusClosed,
-			IssueType: types.TypeTask,
-		},
-	}
-
-	ctx := context.Background()
-	_, err = supervisor.AssessCompletion(ctx, epic, children)
-
-	// Should return an error with invalid API key
-	if err == nil {
-		t.Error("Expected error with invalid API key, got nil")
-	}
-
-	// Error should mention authentication or API key
-	if !strings.Contains(err.Error(), "authentication_error") &&
-		!strings.Contains(err.Error(), "invalid") {
-		t.Errorf("Error should mention authentication issue, got: %v", err)
-	}
+	// OBSOLETE: This test is no longer applicable after CLI conversion
+	// Previously tested that invalid API keys caused authentication errors
+	// Now using Claude CLI with session authentication - API key is not validated
+	// Claude CLI uses ~/.claude session credentials instead of per-request API keys
+	t.Skip("Test obsolete: CLI uses session auth, not per-request API keys")
 }
 
 func TestAssessCompletion_ObjectivesFocus(t *testing.T) {
