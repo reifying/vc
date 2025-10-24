@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/steveyegge/vc/internal/types"
 )
 
@@ -46,33 +45,11 @@ func (s *Supervisor) GenerateRecoveryStrategy(ctx context.Context, issue *types.
 	// Build the prompt for recovery strategy
 	prompt := s.buildRecoveryPrompt(issue, gateResults)
 
-	// Call Anthropic API with retry logic
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "recovery-strategy", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model),
-			MaxTokens: 3072, // Medium-length responses for strategy
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	model := getModelForCLI(s.model)
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "recovery-strategy", prompt, model)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return nil, fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response as JSON using resilient parser
@@ -87,11 +64,11 @@ func (s *Supervisor) GenerateRecoveryStrategy(ctx context.Context, issue *types.
 
 	// Log the strategy
 	duration := time.Since(startTime)
-	fmt.Printf("AI Recovery Strategy for %s: action=%s, confidence=%.2f, duration=%v\n",
+	fmt.Printf("AI Recovery Strategy for %s: action=%s, confidence=%.2f, duration=%v (via Claude CLI)\n",
 		issue.ID, strategy.Action, strategy.Confidence, duration)
 
 	// Log AI usage to events
-	if err := s.logAIUsage(ctx, issue.ID, "recovery-strategy", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, issue.ID, "recovery-strategy", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 

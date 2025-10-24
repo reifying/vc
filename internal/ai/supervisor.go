@@ -54,9 +54,7 @@ func NewSupervisor(cfg *Config) (*Supervisor, error) {
 	apiKey := cfg.APIKey
 	if apiKey == "" {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
-		if apiKey == "" {
-			return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
-		}
+		// Note: API key is now optional - some functions (like recovery) use Claude CLI instead
 	}
 
 	model := cfg.Model
