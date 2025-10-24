@@ -60,7 +60,7 @@ func (s *Supervisor) CheckIssueDuplicate(ctx context.Context, candidate, existin
 	var err error
 
 	err = s.retryWithBackoff(ctx, "duplicate_check", func(ctx context.Context) error {
-		responseText, err = s.CallAI(ctx, prompt, "duplicate_check", s.model, 1000)
+		responseText, err = s.CallAI(ctx, prompt, "duplicate_check", "", 1000)
 		return err
 	})
 
@@ -145,7 +145,7 @@ func (s *Supervisor) CheckIssueDuplicateBatch(ctx context.Context, candidate *ty
 	var err error
 
 	err = s.retryWithBackoff(ctx, "batch_duplicate_check", func(ctx context.Context) error {
-		responseText, err = s.CallAI(ctx, prompt, "batch_duplicate_check", s.model, maxTokens)
+		responseText, err = s.CallAI(ctx, prompt, "batch_duplicate_check", "", maxTokens)
 		return err
 	})
 

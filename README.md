@@ -57,8 +57,11 @@ Loop {
 ## Quick Start
 
 ```bash
-# Set up environment
+# Set up environment (API provider - default)
 export ANTHROPIC_API_KEY=your-key-here
+
+# Or use Claude CLI (Max plan unlimited)
+export VC_AI_PROVIDER=cli
 
 # Build and run
 go build -o vc ./cmd/vc
@@ -71,6 +74,21 @@ vc> Add a feature for CSV export
 vc> Show me what's blocked
 vc> How's the project doing?
 ```
+
+## AI Provider Configuration
+
+VC supports two AI providers for the supervision layer:
+
+**Anthropic API (Default)** - Pay-per-token via Anthropic API
+- Set `ANTHROPIC_API_KEY` environment variable
+- Configurable model via `Config.Model`
+
+**Claude CLI (Max Plan)** - Uses Claude Code Max unlimited quota
+- Set `VC_AI_PROVIDER=cli` environment variable
+- Requires `~/.claude/local/claude` binary
+- Automatically maps models to CLI aliases (sonnet/haiku/opus)
+
+Provider selection precedence: `Config.Provider` > `VC_AI_PROVIDER` env var > API (default)
 
 The REPL provides a pure conversational interface - no commands to memorize. The AI understands your intent and uses the appropriate tools to help you manage work.
 

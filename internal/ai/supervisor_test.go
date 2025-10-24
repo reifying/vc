@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,9 @@ import (
 	"github.com/steveyegge/vc/internal/events"
 	"github.com/steveyegge/vc/internal/storage/sqlite"
 	"github.com/steveyegge/vc/internal/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/semaphore"
 )
 
 // mockStorage implements a minimal storage.Storage for testing
@@ -227,7 +231,6 @@ func TestBuildAssessmentPrompt(t *testing.T) {
 	store := newMockStorage()
 	supervisor := &Supervisor{
 		store: store,
-		model: "test-model",
 	}
 
 	issue := &types.Issue{
@@ -271,7 +274,6 @@ func TestBuildAnalysisPrompt(t *testing.T) {
 	store := newMockStorage()
 	supervisor := &Supervisor{
 		store: store,
-		model: "test-model",
 	}
 
 	issue := &types.Issue{
@@ -320,7 +322,6 @@ func TestCreateDiscoveredIssues(t *testing.T) {
 	store := newMockStorage()
 	supervisor := &Supervisor{
 		store: store,
-		model: "test-model",
 	}
 
 	parentIssue := &types.Issue{
@@ -454,7 +455,6 @@ func TestCreateDiscoveredIssues_PartialFailure(t *testing.T) {
 	store := newMockStorage()
 	supervisor := &Supervisor{
 		store: store,
-		model: "test-model",
 	}
 
 	parentIssue := &types.Issue{
@@ -561,7 +561,6 @@ func TestPriorityMapping(t *testing.T) {
 	store := newMockStorage()
 	supervisor := &Supervisor{
 		store: store,
-		model: "test-model",
 	}
 
 	parentIssue := &types.Issue{ID: "parent", Title: "Parent"}
@@ -617,7 +616,6 @@ func TestTypeMapping(t *testing.T) {
 	store := newMockStorage()
 	supervisor := &Supervisor{
 		store: store,
-		model: "test-model",
 	}
 
 	parentIssue := &types.Issue{ID: "parent", Title: "Parent"}
@@ -913,6 +911,7 @@ func TestCircuitBreakerThreadSafety(t *testing.T) {
 func TestCircuitBreakerWithRetry(t *testing.T) {
 	t.Run("circuit breaker blocks retries when open", func(t *testing.T) {
 		store := newMockStorage()
+		mockProvider := NewMockAIProvider()
 		cfg := &Config{
 			Store: store,
 			Retry: RetryConfig{
@@ -928,10 +927,15 @@ func TestCircuitBreakerWithRetry(t *testing.T) {
 			},
 		}
 
-		supervisor, err := NewSupervisor(cfg)
-		if err != nil {
-			t.Fatalf("Failed to create supervisor: %v", err)
+		// Create supervisor with mock provider directly
+		supervisor := &Supervisor{
+			provider:       mockProvider,
+			store:          store,
+			retry:          cfg.Retry,
+			circuitBreaker: NewCircuitBreaker(cfg.Retry.FailureThreshold, cfg.Retry.SuccessThreshold, cfg.Retry.OpenTimeout),
+			concurrencySem: semaphore.NewWeighted(3),
 		}
+		err := error(nil)
 
 		// Trip the circuit by causing failures
 		callCount := 0
@@ -972,6 +976,7 @@ func TestCircuitBreakerWithRetry(t *testing.T) {
 
 	t.Run("successful request records success with circuit breaker", func(t *testing.T) {
 		store := newMockStorage()
+		mockProvider := NewMockAIProvider()
 		cfg := &Config{
 			Store: store,
 			Retry: RetryConfig{
@@ -987,10 +992,16 @@ func TestCircuitBreakerWithRetry(t *testing.T) {
 			},
 		}
 
-		supervisor, err := NewSupervisor(cfg)
-		if err != nil {
-			t.Fatalf("Failed to create supervisor: %v", err)
+		// Create supervisor with mock provider directly
+		supervisor := &Supervisor{
+			provider:       mockProvider,
+			store:          store,
+			retry:          cfg.Retry,
+			circuitBreaker: NewCircuitBreaker(cfg.Retry.FailureThreshold, cfg.Retry.SuccessThreshold, cfg.Retry.OpenTimeout),
+			concurrencySem: semaphore.NewWeighted(3),
 		}
+		err := error(nil)
+		_ = err
 
 		ctx := context.Background()
 
@@ -1018,6 +1029,7 @@ func TestCircuitBreakerWithRetry(t *testing.T) {
 
 	t.Run("non-retriable errors don't affect circuit breaker", func(t *testing.T) {
 		store := newMockStorage()
+		mockProvider := NewMockAIProvider()
 		cfg := &Config{
 			Store: store,
 			Retry: RetryConfig{
@@ -1033,10 +1045,16 @@ func TestCircuitBreakerWithRetry(t *testing.T) {
 			},
 		}
 
-		supervisor, err := NewSupervisor(cfg)
-		if err != nil {
-			t.Fatalf("Failed to create supervisor: %v", err)
+		// Create supervisor with mock provider directly
+		supervisor := &Supervisor{
+			provider:       mockProvider,
+			store:          store,
+			retry:          cfg.Retry,
+			circuitBreaker: NewCircuitBreaker(cfg.Retry.FailureThreshold, cfg.Retry.SuccessThreshold, cfg.Retry.OpenTimeout),
+			concurrencySem: semaphore.NewWeighted(3),
 		}
+		err := error(nil)
+		_ = err
 
 		ctx := context.Background()
 		nonRetriableError := errors.New("401 unauthorized")
@@ -1098,6 +1116,7 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 // TestCircuitBreakerDisabled tests behavior when circuit breaker is disabled
 func TestCircuitBreakerDisabled(t *testing.T) {
 	store := newMockStorage()
+	mockProvider := NewMockAIProvider()
 	cfg := &Config{
 		Store: store,
 		Retry: RetryConfig{
@@ -1110,10 +1129,16 @@ func TestCircuitBreakerDisabled(t *testing.T) {
 		},
 	}
 
-	supervisor, err := NewSupervisor(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create supervisor: %v", err)
+	// Create supervisor with mock provider directly (no circuit breaker)
+	supervisor := &Supervisor{
+		provider:       mockProvider,
+		store:          store,
+		retry:          cfg.Retry,
+		circuitBreaker: nil, // Disabled
+		concurrencySem: semaphore.NewWeighted(3),
 	}
+	err := error(nil)
+	_ = err
 
 	// Circuit breaker should be nil
 	if supervisor.circuitBreaker != nil {
@@ -1138,4 +1163,284 @@ func TestCircuitBreakerDisabled(t *testing.T) {
 	if callCount != 3 {
 		t.Errorf("Expected 3 calls (2 retries + 1 success), got %d", callCount)
 	}
+}
+
+// Tests for provider selection configuration (vc-14)
+
+func TestNewSupervisor_ProviderSelection(t *testing.T) {
+	// Use mock storage for all tests
+	store := newMockStorage()
+
+	t.Run("defaults to API provider", func(t *testing.T) {
+		// Clear env var
+		os.Unsetenv("VC_AI_PROVIDER")
+		os.Setenv("ANTHROPIC_API_KEY", "test-key")
+		defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+		cfg := &Config{
+			Store: store,
+			Retry: DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+		assert.NotNil(t, supervisor)
+		assert.NotNil(t, supervisor.provider)
+
+		// Check that it's an API provider
+		_, ok := supervisor.provider.(*AnthropicAPIProvider)
+		assert.True(t, ok, "Should be AnthropicAPIProvider")
+	})
+
+	t.Run("uses API provider when VC_AI_PROVIDER=api", func(t *testing.T) {
+		os.Setenv("VC_AI_PROVIDER", "api")
+		os.Setenv("ANTHROPIC_API_KEY", "test-key")
+		defer func() {
+			os.Unsetenv("VC_AI_PROVIDER")
+			os.Unsetenv("ANTHROPIC_API_KEY")
+		}()
+
+		cfg := &Config{
+			Store: store,
+			Retry: DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		_, ok := supervisor.provider.(*AnthropicAPIProvider)
+		assert.True(t, ok, "Should be AnthropicAPIProvider")
+	})
+
+	t.Run("uses CLI provider when VC_AI_PROVIDER=cli", func(t *testing.T) {
+		// Skip if CLI not available
+		if _, err := NewClaudeCLIProvider(""); err != nil {
+			t.Skip("Claude CLI not available")
+		}
+
+		os.Setenv("VC_AI_PROVIDER", "cli")
+		defer os.Unsetenv("VC_AI_PROVIDER")
+
+		cfg := &Config{
+			Store: store,
+			Retry: DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		_, ok := supervisor.provider.(*ClaudeCLIProvider)
+		assert.True(t, ok, "Should be ClaudeCLIProvider")
+	})
+
+	t.Run("config Provider field overrides default", func(t *testing.T) {
+		// Skip if CLI not available
+		if _, err := NewClaudeCLIProvider(""); err != nil {
+			t.Skip("Claude CLI not available")
+		}
+
+		os.Unsetenv("VC_AI_PROVIDER")
+
+		cfg := &Config{
+			Provider: "cli", // Explicitly set in config
+			Store:    store,
+			Retry:    DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		_, ok := supervisor.provider.(*ClaudeCLIProvider)
+		assert.True(t, ok, "Should be ClaudeCLIProvider")
+	})
+
+	t.Run("env var takes precedence over empty config", func(t *testing.T) {
+		// Skip if CLI not available
+		if _, err := NewClaudeCLIProvider(""); err != nil {
+			t.Skip("Claude CLI not available")
+		}
+
+		os.Setenv("VC_AI_PROVIDER", "cli")
+		defer os.Unsetenv("VC_AI_PROVIDER")
+
+		cfg := &Config{
+			Provider: "", // Empty, should use env var
+			Store:    store,
+			Retry:    DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		_, ok := supervisor.provider.(*ClaudeCLIProvider)
+		assert.True(t, ok, "Should be ClaudeCLIProvider from env var")
+	})
+
+	t.Run("config Provider takes precedence over env var", func(t *testing.T) {
+		os.Setenv("VC_AI_PROVIDER", "cli")
+		os.Setenv("ANTHROPIC_API_KEY", "test-key")
+		defer func() {
+			os.Unsetenv("VC_AI_PROVIDER")
+			os.Unsetenv("ANTHROPIC_API_KEY")
+		}()
+
+		cfg := &Config{
+			Provider: "api", // Explicitly set, should override env
+			Store:    store,
+			Retry:    DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		_, ok := supervisor.provider.(*AnthropicAPIProvider)
+		assert.True(t, ok, "Should be AnthropicAPIProvider from config")
+	})
+}
+
+func TestNewSupervisor_Validation(t *testing.T) {
+	store := newMockStorage()
+
+	t.Run("requires storage", func(t *testing.T) {
+		cfg := &Config{
+			Store: nil,
+		}
+
+		_, err := NewSupervisor(cfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "storage is required")
+	})
+
+	t.Run("API provider requires API key", func(t *testing.T) {
+		os.Unsetenv("ANTHROPIC_API_KEY")
+		os.Unsetenv("VC_AI_PROVIDER")
+
+		cfg := &Config{
+			Provider: "api",
+			APIKey:   "", // No API key
+			Store:    store,
+			Retry:    DefaultRetryConfig(),
+		}
+
+		_, err := NewSupervisor(cfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ANTHROPIC_API_KEY is required")
+	})
+
+	t.Run("CLI provider fails if CLI not found", func(t *testing.T) {
+		os.Setenv("VC_CLAUDE_PATH", "/nonexistent/path/to/claude")
+		defer os.Unsetenv("VC_CLAUDE_PATH")
+
+		cfg := &Config{
+			Provider: "cli",
+			Store:    store,
+			Retry:    DefaultRetryConfig(),
+		}
+
+		_, err := NewSupervisor(cfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create Claude CLI provider")
+		assert.Contains(t, err.Error(), "claude CLI not found")
+	})
+
+	t.Run("rejects unknown provider type", func(t *testing.T) {
+		cfg := &Config{
+			Provider: "unknown-provider",
+			Store:    store,
+			Retry:    DefaultRetryConfig(),
+		}
+
+		_, err := NewSupervisor(cfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown provider type")
+		assert.Contains(t, err.Error(), "unknown-provider")
+	})
+}
+
+func TestNewSupervisor_ModelDefaults(t *testing.T) {
+	store := newMockStorage()
+
+	t.Run("API provider uses Sonnet 4.5 by default", func(t *testing.T) {
+		os.Setenv("ANTHROPIC_API_KEY", "test-key")
+		os.Unsetenv("VC_AI_PROVIDER")
+		defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+		cfg := &Config{
+			Model: "", // Empty, should use default
+			Store: store,
+			Retry: DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		apiProvider, ok := supervisor.provider.(*AnthropicAPIProvider)
+		require.True(t, ok)
+		assert.Equal(t, "claude-sonnet-4-5-20250929", apiProvider.model)
+	})
+
+	t.Run("CLI provider uses sonnet alias by default", func(t *testing.T) {
+		// Skip if CLI not available
+		if _, err := NewClaudeCLIProvider(""); err != nil {
+			t.Skip("Claude CLI not available")
+		}
+
+		os.Setenv("VC_AI_PROVIDER", "cli")
+		defer os.Unsetenv("VC_AI_PROVIDER")
+
+		cfg := &Config{
+			Model: "", // Empty, should use default
+			Store: store,
+			Retry: DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		cliProvider, ok := supervisor.provider.(*ClaudeCLIProvider)
+		require.True(t, ok)
+		assert.Equal(t, "sonnet", cliProvider.model)
+	})
+
+	t.Run("respects custom model for API provider", func(t *testing.T) {
+		os.Setenv("ANTHROPIC_API_KEY", "test-key")
+		os.Unsetenv("VC_AI_PROVIDER")
+		defer os.Unsetenv("ANTHROPIC_API_KEY")
+
+		cfg := &Config{
+			Model: "claude-3-5-haiku-20241022",
+			Store: store,
+			Retry: DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		apiProvider, ok := supervisor.provider.(*AnthropicAPIProvider)
+		require.True(t, ok)
+		assert.Equal(t, "claude-3-5-haiku-20241022", apiProvider.model)
+	})
+
+	t.Run("maps custom model for CLI provider", func(t *testing.T) {
+		// Skip if CLI not available
+		if _, err := NewClaudeCLIProvider(""); err != nil {
+			t.Skip("Claude CLI not available")
+		}
+
+		os.Setenv("VC_AI_PROVIDER", "cli")
+		defer os.Unsetenv("VC_AI_PROVIDER")
+
+		cfg := &Config{
+			Model: "claude-3-5-haiku-20241022", // Full name, should be mapped to "haiku"
+			Store: store,
+			Retry: DefaultRetryConfig(),
+		}
+
+		supervisor, err := NewSupervisor(cfg)
+		require.NoError(t, err)
+
+		cliProvider, ok := supervisor.provider.(*ClaudeCLIProvider)
+		require.True(t, ok)
+		assert.Equal(t, "haiku", cliProvider.model)
+	})
 }

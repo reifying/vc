@@ -35,12 +35,23 @@ func (s *Supervisor) AssessIssueState(ctx context.Context, issue *types.Issue) (
 	// Build the prompt for assessment
 	prompt := s.buildAssessmentPrompt(issue)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "assessment", prompt, model)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "assessment", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "assessment",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	parseResult := Parse[Assessment](responseText, ParseOptions{
@@ -54,7 +65,7 @@ func (s *Supervisor) AssessIssueState(ctx context.Context, issue *types.Issue) (
 
 	// Log the assessment
 	duration := time.Since(startTime)
-	fmt.Printf("AI Assessment for %s: confidence=%.2f, effort=%s, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Assessment for %s: confidence=%.2f, effort=%s, duration=%v\n",
 		issue.ID, assessment.Confidence, assessment.EstimatedEffort, duration)
 
 	// Log AI usage to events
@@ -80,12 +91,23 @@ func (s *Supervisor) AssessCompletion(ctx context.Context, issue *types.Issue, c
 	// Build the prompt for completion assessment
 	prompt := s.buildCompletionPrompt(issue, children)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "completion-assessment", prompt, model)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "completion-assessment", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "completion-assessment",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	parseResult := Parse[CompletionAssessment](responseText, ParseOptions{
@@ -99,7 +121,7 @@ func (s *Supervisor) AssessCompletion(ctx context.Context, issue *types.Issue, c
 
 	// Log the assessment
 	duration := time.Since(startTime)
-	fmt.Printf("AI Completion Assessment for %s: should_close=%v, confidence=%.2f, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Completion Assessment for %s: should_close=%v, confidence=%.2f, duration=%v\n",
 		issue.ID, assessment.ShouldClose, assessment.Confidence, duration)
 
 	// Log AI usage to events

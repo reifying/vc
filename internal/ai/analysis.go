@@ -43,12 +43,23 @@ func (s *Supervisor) AnalyzeExecutionResult(ctx context.Context, issue *types.Is
 	// Build the prompt for analysis
 	prompt := s.buildAnalysisPrompt(issue, agentOutput, success)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "analysis", prompt, model)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "analysis", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "analysis",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	// The parser automatically tries multiple strategies:
@@ -73,7 +84,7 @@ func (s *Supervisor) AnalyzeExecutionResult(ctx context.Context, issue *types.Is
 
 	// Log the analysis
 	duration := time.Since(startTime)
-	fmt.Printf("AI Analysis for %s: completed=%v, discovered=%d issues, quality=%d issues, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Analysis for %s: completed=%v, discovered=%d issues, quality=%d issues, duration=%v\n",
 		issue.ID, analysis.Completed, len(analysis.DiscoveredIssues), len(analysis.QualityIssues), duration)
 
 	// Log AI usage to events

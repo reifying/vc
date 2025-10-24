@@ -45,12 +45,23 @@ func (s *Supervisor) GenerateRecoveryStrategy(ctx context.Context, issue *types.
 	// Build the prompt for recovery strategy
 	prompt := s.buildRecoveryPrompt(issue, gateResults)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "recovery-strategy", prompt, model)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "recovery-strategy", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "recovery-strategy",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	parseResult := Parse[RecoveryStrategy](responseText, ParseOptions{
@@ -64,7 +75,7 @@ func (s *Supervisor) GenerateRecoveryStrategy(ctx context.Context, issue *types.
 
 	// Log the strategy
 	duration := time.Since(startTime)
-	fmt.Printf("AI Recovery Strategy for %s: action=%s, confidence=%.2f, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Recovery Strategy for %s: action=%s, confidence=%.2f, duration=%v\n",
 		issue.ID, strategy.Action, strategy.Confidence, duration)
 
 	// Log AI usage to events

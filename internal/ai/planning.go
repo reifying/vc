@@ -26,12 +26,23 @@ func (s *Supervisor) GeneratePlan(ctx context.Context, planningCtx *types.Planni
 	// Build the planning prompt
 	prompt := s.buildPlanningPrompt(planningCtx)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "planning", prompt, model)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "planning", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "planning",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	parseResult := Parse[types.MissionPlan](responseText, ParseOptions{
@@ -57,7 +68,7 @@ func (s *Supervisor) GeneratePlan(ctx context.Context, planningCtx *types.Planni
 
 	// Log the plan generation
 	duration := time.Since(startTime)
-	fmt.Printf("AI Planning for %s: phases=%d, confidence=%.2f, effort=%s, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Planning for %s: phases=%d, confidence=%.2f, effort=%s, duration=%v\n",
 		planningCtx.Mission.ID, len(plan.Phases), plan.Confidence, plan.EstimatedEffort, duration)
 
 	// Log AI usage to events
@@ -93,12 +104,23 @@ func (s *Supervisor) RefinePhase(ctx context.Context, phase *types.Phase, missio
 	// Build the refinement prompt
 	prompt := s.buildRefinementPrompt(phase, missionCtx)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "refinement", prompt, model)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "refinement", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "refinement",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response - expecting {"tasks": [...]}
 	type refinementResponse struct {
@@ -127,7 +149,7 @@ func (s *Supervisor) RefinePhase(ctx context.Context, phase *types.Phase, missio
 
 	// Log the refinement
 	duration := time.Since(startTime)
-	fmt.Printf("AI Refinement for phase %s: tasks=%d, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Refinement for phase %s: tasks=%d, duration=%v\n",
 		phase.ID, len(tasks), duration)
 
 	// Log AI usage
@@ -187,12 +209,23 @@ func (s *Supervisor) ValidatePhaseStructure(ctx context.Context, phases []types.
 	// Build validation prompt
 	prompt := s.buildPhaseValidationPrompt(phases)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "phase-validation", prompt, model)
+	// Call AI provider with retry logic
+	var invokeResult *InvokeResult
+	err := s.retryWithBackoff(ctx, "phase-validation", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "phase-validation",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		invokeResult = res
+		return providerErr
+	})
 	if err != nil {
-		return fmt.Errorf("claude CLI call failed: %w", err)
+		return fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := invokeResult.Text
+	inputTokens := invokeResult.InputTokens
+	outputTokens := invokeResult.OutputTokens
 
 	// Parse the response
 	type validationResult struct {
@@ -209,12 +242,12 @@ func (s *Supervisor) ValidatePhaseStructure(ctx context.Context, phases []types.
 	if !parseResult.Success {
 		return fmt.Errorf("failed to parse phase validation response: %s (response: %s)", parseResult.Error, responseText)
 	}
-	result := parseResult.Data
+	validation := parseResult.Data
 
 	// Log the validation
 	duration := time.Since(startTime)
-	fmt.Printf("AI Phase Validation: valid=%v, errors=%d, warnings=%d, duration=%v (via Claude CLI)\n",
-		result.Valid, len(result.Errors), len(result.Warnings), duration)
+	fmt.Printf("AI Phase Validation: valid=%v, errors=%d, warnings=%d, duration=%v\n",
+		validation.Valid, len(validation.Errors), len(validation.Warnings), duration)
 
 	// Log AI usage (use a dummy issue ID for now since we don't have one in this context)
 	if err := s.logAIUsage(ctx, "phase-validation", "phase-validation", int64(inputTokens), int64(outputTokens), duration); err != nil {
@@ -222,12 +255,12 @@ func (s *Supervisor) ValidatePhaseStructure(ctx context.Context, phases []types.
 	}
 
 	// If invalid, return the errors
-	if !result.Valid {
-		return fmt.Errorf("phase structure validation failed: %s (errors: %v)", result.Reasoning, result.Errors)
+	if !validation.Valid {
+		return fmt.Errorf("phase structure validation failed: %s (errors: %v)", validation.Reasoning, validation.Errors)
 	}
 
 	// Log warnings if any
-	for _, warning := range result.Warnings {
+	for _, warning := range validation.Warnings {
 		fmt.Printf("Phase validation warning: %s\n", warning)
 	}
 

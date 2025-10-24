@@ -50,12 +50,25 @@ func (s *Supervisor) AnalyzeCodeReviewNeed(ctx context.Context, issue *types.Iss
 	// Build the prompt for code review decision
 	prompt := s.buildCodeReviewPrompt(issue, gitDiff)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	// Call AI provider with retry logic
 	// Use haiku for fast, cost-efficient decisions
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "code-review-decision", prompt, "haiku")
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "code-review-decision", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "code-review-decision",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+			Model:     "haiku",
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	parseResult := Parse[CodeReviewDecision](responseText, ParseOptions{
@@ -69,7 +82,7 @@ func (s *Supervisor) AnalyzeCodeReviewNeed(ctx context.Context, issue *types.Iss
 
 	// Log the decision
 	duration := time.Since(startTime)
-	fmt.Printf("AI Code Review Decision for %s: needs_review=%v, confidence=%.2f, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Code Review Decision for %s: needs_review=%v, confidence=%.2f, duration=%v\n",
 		issue.ID, decision.NeedsReview, decision.Confidence, duration)
 
 	// Log AI usage to events
@@ -96,13 +109,24 @@ func (s *Supervisor) AnalyzeTestCoverage(ctx context.Context, issue *types.Issue
 	// Build the prompt for test coverage analysis
 	prompt := s.buildTestCoveragePrompt(issue, gitDiff, existingTests)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	// Call AI provider with retry logic
 	// Use sonnet for thorough analysis
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "test-coverage-analysis", prompt, model)
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "test-coverage-analysis", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "test-coverage-analysis",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	parseResult := Parse[TestSufficiencyAnalysis](responseText, ParseOptions{
@@ -116,7 +140,7 @@ func (s *Supervisor) AnalyzeTestCoverage(ctx context.Context, issue *types.Issue
 
 	// Log the analysis
 	duration := time.Since(startTime)
-	fmt.Printf("AI Test Coverage Analysis for %s: sufficient=%v, test_issues=%d, confidence=%.2f, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Test Coverage Analysis for %s: sufficient=%v, test_issues=%d, confidence=%.2f, duration=%v\n",
 		issue.ID, analysis.SufficientCoverage, len(analysis.TestIssues), analysis.Confidence, duration)
 
 	// Log AI usage to events
@@ -144,13 +168,24 @@ func (s *Supervisor) AnalyzeCodeQuality(ctx context.Context, issue *types.Issue,
 	// Build the prompt for code quality analysis
 	prompt := s.buildCodeQualityPrompt(issue, gitDiff)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	// Call AI provider with retry logic
 	// Use sonnet for thorough analysis
-	model := getModelForCLI(s.model)
-	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "code-quality-analysis", prompt, model)
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "code-quality-analysis", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "code-quality-analysis",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return nil, fmt.Errorf("claude CLI call failed: %w", err)
+		return nil, fmt.Errorf("AI call failed: %w", err)
 	}
+	responseText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Parse the response as JSON using resilient parser
 	parseResult := Parse[CodeQualityAnalysis](responseText, ParseOptions{
@@ -164,7 +199,7 @@ func (s *Supervisor) AnalyzeCodeQuality(ctx context.Context, issue *types.Issue,
 
 	// Log the analysis
 	duration := time.Since(startTime)
-	fmt.Printf("AI Code Quality Analysis for %s: issues=%d, confidence=%.2f, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Code Quality Analysis for %s: issues=%d, confidence=%.2f, duration=%v\n",
 		issue.ID, len(analysis.Issues), analysis.Confidence, duration)
 
 	// Log AI usage to events

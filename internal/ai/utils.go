@@ -22,8 +22,8 @@ func (s *Supervisor) logAIUsage(ctx context.Context, issueID, activity string, i
 		return nil
 	}
 
-	comment := fmt.Sprintf("AI Usage (%s): input=%d tokens, output=%d tokens, duration=%v, model=%s",
-		activity, inputTokens, outputTokens, duration, s.model)
+	comment := fmt.Sprintf("AI Usage (%s): input=%d tokens, output=%d tokens, duration=%v",
+		activity, inputTokens, outputTokens, duration)
 	return s.store.AddComment(ctx, issueID, "ai-supervisor", comment)
 }
 
@@ -32,33 +32,34 @@ func (s *Supervisor) logAIUsage(ctx context.Context, issueID, activity string, i
 // without duplicating retry logic and circuit breaker code
 func (s *Supervisor) CallAI(ctx context.Context, prompt string, operation string, model string, maxTokens int) (string, error) {
 	startTime := time.Now()
-	var responseText string
-
-	// Use default model if not specified
-	if model == "" {
-		model = s.model
-	}
 
 	// Use default maxTokens if not specified
 	if maxTokens == 0 {
 		maxTokens = 4096
 	}
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	cliModel := getModelForCLI(model)
-	var inputTokens, outputTokens int
-	var err error
-	responseText, inputTokens, outputTokens, err = s.invokeCLIWithRetry(ctx, operation, prompt, cliModel)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, operation, func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: operation,
+			Prompt:    prompt,
+			MaxTokens: maxTokens,
+			Model:     model, // Optional model override
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
-		return "", fmt.Errorf("claude CLI call failed: %w", err)
+		return "", fmt.Errorf("AI call failed: %w", err)
 	}
 
 	// Log the call
 	duration := time.Since(startTime)
-	fmt.Printf("AI %s call: input=%d tokens, output=%d tokens, duration=%v (via Claude CLI)\n",
-		operation, inputTokens, outputTokens, duration)
+	fmt.Printf("AI %s call: input=%d tokens, output=%d tokens, duration=%v\n",
+		operation, result.InputTokens, result.OutputTokens, duration)
 
-	return responseText, nil
+	return result.Text, nil
 }
 
 // SummarizeAgentOutput uses AI to create an intelligent summary of agent output
@@ -85,17 +86,28 @@ func (s *Supervisor) SummarizeAgentOutput(ctx context.Context, issue *types.Issu
 	// Build the summarization prompt
 	prompt := s.buildSummarizationPrompt(issue, fullOutput, maxLength)
 
-	// Call Claude CLI instead of API (uses Max plan instead of API billing)
-	model := getModelForCLI(s.model)
-	summaryText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "summarization", prompt, model)
+	// Call AI provider with retry logic
+	var result *InvokeResult
+	err := s.retryWithBackoff(ctx, "summarization", func(attemptCtx context.Context) error {
+		res, providerErr := s.provider.Invoke(attemptCtx, InvokeParams{
+			Operation: "summarization",
+			Prompt:    prompt,
+			MaxTokens: 4096,
+		})
+		result = res
+		return providerErr
+	})
 	if err != nil {
 		// Don't fall back to heuristics - return the error (ZFC compliance)
 		return "", fmt.Errorf("AI summarization failed: %w", err)
 	}
+	summaryText := result.Text
+	inputTokens := result.InputTokens
+	outputTokens := result.OutputTokens
 
 	// Log the summarization
 	duration := time.Since(startTime)
-	fmt.Printf("AI Summarization: input=%d chars, output=%d chars, duration=%v (via Claude CLI)\n",
+	fmt.Printf("AI Summarization: input=%d chars, output=%d chars, duration=%v\n",
 		len(fullOutput), len(summaryText), duration)
 
 	// Log AI usage to events
