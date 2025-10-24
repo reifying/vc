@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/steveyegge/vc/internal/types"
 )
 
@@ -51,33 +50,11 @@ func (s *Supervisor) AnalyzeCodeReviewNeed(ctx context.Context, issue *types.Iss
 	// Build the prompt for code review decision
 	prompt := s.buildCodeReviewPrompt(issue, gitDiff)
 
-	// Call Anthropic API with retry logic using Haiku (fast and cheap)
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "code-review-decision", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model("claude-3-5-haiku-20241022"), // Use Haiku for cost efficiency
-			MaxTokens: 1024,                                         // Short decision
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	// Use haiku for fast, cost-efficient decisions
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "code-review-decision", prompt, "haiku")
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return nil, fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response as JSON using resilient parser
@@ -92,11 +69,11 @@ func (s *Supervisor) AnalyzeCodeReviewNeed(ctx context.Context, issue *types.Iss
 
 	// Log the decision
 	duration := time.Since(startTime)
-	fmt.Printf("AI Code Review Decision for %s: needs_review=%v, confidence=%.2f, duration=%v\n",
+	fmt.Printf("AI Code Review Decision for %s: needs_review=%v, confidence=%.2f, duration=%v (via Claude CLI)\n",
 		issue.ID, decision.NeedsReview, decision.Confidence, duration)
 
 	// Log AI usage to events
-	if err := s.logAIUsage(ctx, issue.ID, "code-review-decision", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, issue.ID, "code-review-decision", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 
@@ -119,33 +96,12 @@ func (s *Supervisor) AnalyzeTestCoverage(ctx context.Context, issue *types.Issue
 	// Build the prompt for test coverage analysis
 	prompt := s.buildTestCoveragePrompt(issue, gitDiff, existingTests)
 
-	// Call Anthropic API with retry logic using Sonnet (thorough analysis)
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "test-coverage-analysis", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model), // Use Sonnet for thorough analysis
-			MaxTokens: 4096,                     // Longer responses for detailed analysis
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	// Use sonnet for thorough analysis
+	model := getModelForCLI(s.model)
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "test-coverage-analysis", prompt, model)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return nil, fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response as JSON using resilient parser
@@ -160,11 +116,11 @@ func (s *Supervisor) AnalyzeTestCoverage(ctx context.Context, issue *types.Issue
 
 	// Log the analysis
 	duration := time.Since(startTime)
-	fmt.Printf("AI Test Coverage Analysis for %s: sufficient=%v, test_issues=%d, confidence=%.2f, duration=%v\n",
+	fmt.Printf("AI Test Coverage Analysis for %s: sufficient=%v, test_issues=%d, confidence=%.2f, duration=%v (via Claude CLI)\n",
 		issue.ID, analysis.SufficientCoverage, len(analysis.TestIssues), analysis.Confidence, duration)
 
 	// Log AI usage to events
-	if err := s.logAIUsage(ctx, issue.ID, "test-coverage-analysis", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, issue.ID, "test-coverage-analysis", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 
@@ -188,33 +144,12 @@ func (s *Supervisor) AnalyzeCodeQuality(ctx context.Context, issue *types.Issue,
 	// Build the prompt for code quality analysis
 	prompt := s.buildCodeQualityPrompt(issue, gitDiff)
 
-	// Call Anthropic API with retry logic using Sonnet (thorough analysis)
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "code-quality-analysis", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model), // Use Sonnet for thorough analysis
-			MaxTokens: 4096,                     // Longer responses for detailed analysis
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	// Use sonnet for thorough analysis
+	model := getModelForCLI(s.model)
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "code-quality-analysis", prompt, model)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return nil, fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response as JSON using resilient parser
@@ -229,11 +164,11 @@ func (s *Supervisor) AnalyzeCodeQuality(ctx context.Context, issue *types.Issue,
 
 	// Log the analysis
 	duration := time.Since(startTime)
-	fmt.Printf("AI Code Quality Analysis for %s: issues=%d, confidence=%.2f, duration=%v\n",
+	fmt.Printf("AI Code Quality Analysis for %s: issues=%d, confidence=%.2f, duration=%v (via Claude CLI)\n",
 		issue.ID, len(analysis.Issues), analysis.Confidence, duration)
 
 	// Log AI usage to events
-	if err := s.logAIUsage(ctx, issue.ID, "code-quality-analysis", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, issue.ID, "code-quality-analysis", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 

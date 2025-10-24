@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/steveyegge/vc/internal/types"
 )
 
@@ -46,38 +44,19 @@ func (s *Supervisor) CallAI(ctx context.Context, prompt string, operation string
 		maxTokens = 4096
 	}
 
-	// Call Anthropic API with retry logic
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, operation, func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(model),
-			MaxTokens: int64(maxTokens),
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	cliModel := getModelForCLI(model)
+	var inputTokens, outputTokens int
+	var err error
+	responseText, inputTokens, outputTokens, err = s.invokeCLIWithRetry(ctx, operation, prompt, cliModel)
 	if err != nil {
-		return "", fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return "", fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Log the call
 	duration := time.Since(startTime)
-	fmt.Printf("AI %s call: input=%d tokens, output=%d tokens, duration=%v\n",
-		operation, response.Usage.InputTokens, response.Usage.OutputTokens, duration)
+	fmt.Printf("AI %s call: input=%d tokens, output=%d tokens, duration=%v (via Claude CLI)\n",
+		operation, inputTokens, outputTokens, duration)
 
 	return responseText, nil
 }
@@ -106,45 +85,21 @@ func (s *Supervisor) SummarizeAgentOutput(ctx context.Context, issue *types.Issu
 	// Build the summarization prompt
 	prompt := s.buildSummarizationPrompt(issue, fullOutput, maxLength)
 
-	// Call Anthropic API with retry logic
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "summarization", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model),
-			MaxTokens: 2048, // Summaries should be concise
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	model := getModelForCLI(s.model)
+	summaryText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "summarization", prompt, model)
 	if err != nil {
 		// Don't fall back to heuristics - return the error (ZFC compliance)
-		return "", fmt.Errorf("AI summarization failed after %d retry attempts: %w", s.retry.MaxRetries+1, err)
+		return "", fmt.Errorf("AI summarization failed: %w", err)
 	}
-
-	// Extract the text content from the response
-	var summary strings.Builder
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			summary.WriteString(block.Text)
-		}
-	}
-
-	summaryText := summary.String()
 
 	// Log the summarization
 	duration := time.Since(startTime)
-	fmt.Printf("AI Summarization: input=%d chars, output=%d chars, duration=%v\n",
+	fmt.Printf("AI Summarization: input=%d chars, output=%d chars, duration=%v (via Claude CLI)\n",
 		len(fullOutput), len(summaryText), duration)
 
 	// Log AI usage to events
-	if err := s.logAIUsage(ctx, issue.ID, "summarization", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, issue.ID, "summarization", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 
