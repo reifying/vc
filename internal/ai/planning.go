@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/steveyegge/vc/internal/types"
 )
 
@@ -27,33 +26,11 @@ func (s *Supervisor) GeneratePlan(ctx context.Context, planningCtx *types.Planni
 	// Build the planning prompt
 	prompt := s.buildPlanningPrompt(planningCtx)
 
-	// Call Anthropic API with retry logic
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "planning", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model),
-			MaxTokens: 8192, // Larger token limit for complex plans
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	model := getModelForCLI(s.model)
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "planning", prompt, model)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return nil, fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response as JSON using resilient parser
@@ -80,11 +57,11 @@ func (s *Supervisor) GeneratePlan(ctx context.Context, planningCtx *types.Planni
 
 	// Log the plan generation
 	duration := time.Since(startTime)
-	fmt.Printf("AI Planning for %s: phases=%d, confidence=%.2f, effort=%s, duration=%v\n",
+	fmt.Printf("AI Planning for %s: phases=%d, confidence=%.2f, effort=%s, duration=%v (via Claude CLI)\n",
 		planningCtx.Mission.ID, len(plan.Phases), plan.Confidence, plan.EstimatedEffort, duration)
 
 	// Log AI usage to events
-	if err := s.logAIUsage(ctx, planningCtx.Mission.ID, "planning", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, planningCtx.Mission.ID, "planning", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 
@@ -116,33 +93,11 @@ func (s *Supervisor) RefinePhase(ctx context.Context, phase *types.Phase, missio
 	// Build the refinement prompt
 	prompt := s.buildRefinementPrompt(phase, missionCtx)
 
-	// Call Anthropic API with retry logic
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "refinement", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model),
-			MaxTokens: 8192,
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	model := getModelForCLI(s.model)
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "refinement", prompt, model)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return nil, fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response - expecting {"tasks": [...]}
@@ -172,11 +127,11 @@ func (s *Supervisor) RefinePhase(ctx context.Context, phase *types.Phase, missio
 
 	// Log the refinement
 	duration := time.Since(startTime)
-	fmt.Printf("AI Refinement for phase %s: tasks=%d, duration=%v\n",
+	fmt.Printf("AI Refinement for phase %s: tasks=%d, duration=%v (via Claude CLI)\n",
 		phase.ID, len(tasks), duration)
 
 	// Log AI usage
-	if err := s.logAIUsage(ctx, phase.ID, "refinement", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, phase.ID, "refinement", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 
@@ -232,33 +187,11 @@ func (s *Supervisor) ValidatePhaseStructure(ctx context.Context, phases []types.
 	// Build validation prompt
 	prompt := s.buildPhaseValidationPrompt(phases)
 
-	// Call Anthropic API with retry logic
-	var response *anthropic.Message
-	err := s.retryWithBackoff(ctx, "phase-validation", func(attemptCtx context.Context) error {
-		resp, apiErr := s.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(s.model),
-			MaxTokens: 2048,
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
-	})
-
+	// Call Claude CLI instead of API (uses Max plan instead of API billing)
+	model := getModelForCLI(s.model)
+	responseText, inputTokens, outputTokens, err := s.invokeCLIWithRetry(ctx, "phase-validation", prompt, model)
 	if err != nil {
-		return fmt.Errorf("anthropic API call failed: %w", err)
-	}
-
-	// Extract the text content from the response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
+		return fmt.Errorf("claude CLI call failed: %w", err)
 	}
 
 	// Parse the response
@@ -280,11 +213,11 @@ func (s *Supervisor) ValidatePhaseStructure(ctx context.Context, phases []types.
 
 	// Log the validation
 	duration := time.Since(startTime)
-	fmt.Printf("AI Phase Validation: valid=%v, errors=%d, warnings=%d, duration=%v\n",
+	fmt.Printf("AI Phase Validation: valid=%v, errors=%d, warnings=%d, duration=%v (via Claude CLI)\n",
 		result.Valid, len(result.Errors), len(result.Warnings), duration)
 
 	// Log AI usage (use a dummy issue ID for now since we don't have one in this context)
-	if err := s.logAIUsage(ctx, "phase-validation", "phase-validation", response.Usage.InputTokens, response.Usage.OutputTokens, duration); err != nil {
+	if err := s.logAIUsage(ctx, "phase-validation", "phase-validation", int64(inputTokens), int64(outputTokens), duration); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to log AI usage: %v\n", err)
 	}
 
