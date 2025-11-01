@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 
 // TestBuildClaudeCodeCommand_WithoutSandbox verifies autonomous operation without sandbox
 func TestBuildClaudeCodeCommand_WithoutSandbox(t *testing.T) {
+	provider := &ClaudeCodeProvider{}
+	ctx := context.Background()
 	cfg := AgentConfig{
 		Type:       AgentTypeClaudeCode,
 		WorkingDir: "/tmp/test",
@@ -19,7 +22,10 @@ func TestBuildClaudeCodeCommand_WithoutSandbox(t *testing.T) {
 	}
 	prompt := "Fix the bug"
 
-	cmd := buildClaudeCodeCommand(cfg, prompt)
+	cmd, err := provider.BuildCommand(ctx, cfg, prompt)
+	if err != nil {
+		t.Fatalf("BuildCommand failed: %v", err)
+	}
 
 	// Verify command name (Args[0] contains the command name)
 	if len(cmd.Args) < 1 {
@@ -51,6 +57,8 @@ func TestBuildClaudeCodeCommand_WithoutSandbox(t *testing.T) {
 
 // TestBuildClaudeCodeCommand_WithSandbox verifies permission bypass in sandbox (vc-114)
 func TestBuildClaudeCodeCommand_WithSandbox(t *testing.T) {
+	provider := &ClaudeCodeProvider{}
+	ctx := context.Background()
 	cfg := AgentConfig{
 		Type:       AgentTypeClaudeCode,
 		WorkingDir: "/tmp/test",
@@ -60,7 +68,10 @@ func TestBuildClaudeCodeCommand_WithSandbox(t *testing.T) {
 	}
 	prompt := "Fix the bug"
 
-	cmd := buildClaudeCodeCommand(cfg, prompt)
+	cmd, err := provider.BuildCommand(ctx, cfg, prompt)
+	if err != nil {
+		t.Fatalf("BuildCommand failed: %v", err)
+	}
 
 	// Verify command name (Args[0] contains the command name)
 	if len(cmd.Args) < 1 {
@@ -92,6 +103,8 @@ func TestBuildClaudeCodeCommand_WithSandbox(t *testing.T) {
 
 // TestBuildAmpCommand verifies amp command building with autonomous operation flags (vc-117)
 func TestBuildAmpCommand(t *testing.T) {
+	provider := &AmpProvider{}
+	ctx := context.Background()
 	cfg := AgentConfig{
 		Type:       AgentTypeAmp,
 		WorkingDir: "/tmp/test",
@@ -101,7 +114,10 @@ func TestBuildAmpCommand(t *testing.T) {
 	}
 	prompt := "Fix the bug"
 
-	cmd := buildAmpCommand(cfg, prompt)
+	cmd, err := provider.BuildCommand(ctx, cfg, prompt)
+	if err != nil {
+		t.Fatalf("BuildCommand failed: %v", err)
+	}
 
 	// Verify command has correct args
 	// Should have: [command_path, --dangerously-allow-all, --execute, prompt, --stream-json]

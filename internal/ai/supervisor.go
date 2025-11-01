@@ -140,3 +140,8 @@ func NewSupervisor(cfg *Config) (*Supervisor, error) {
 		concurrencySem: concurrencySem,
 	}, nil
 }
+
+// Provider returns the AI provider for use by other components
+func (s *Supervisor) Provider() AIProvider {
+	return s.provider
+}

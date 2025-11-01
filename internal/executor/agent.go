@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +40,8 @@ type AgentConfig struct {
 	AgentID    string
 	// Sandbox context (optional - if nil, agent runs in main workspace)
 	Sandbox    *sandbox.Sandbox
+	// Agent provider (optional - if nil, creates default provider from VC_AGENT_PROVIDER env var)
+	Provider   AgentProvider
 }
 
 const (
@@ -124,15 +125,25 @@ func SpawnAgent(ctx context.Context, cfg AgentConfig, prompt string) (*Agent, er
 		return nil, fmt.Errorf("prompt is required")
 	}
 
-	// Build the command based on agent type
-	var cmd *exec.Cmd
-	switch cfg.Type {
-	case AgentTypeAmp:
-		cmd = buildAmpCommand(cfg, prompt)
-	case AgentTypeClaudeCode:
-		cmd = buildClaudeCodeCommand(cfg, prompt)
-	default:
-		return nil, fmt.Errorf("unsupported agent type: %s", cfg.Type)
+	// Create agent provider if not specified
+	provider := cfg.Provider
+	if provider == nil {
+		var err error
+		// Map AgentType to provider type string for backward compatibility
+		providerType := string(cfg.Type)
+		if providerType == "" {
+			providerType = "" // Empty string triggers default from env var
+		}
+		provider, err = NewAgentProvider(providerType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create agent provider: %w", err)
+		}
+	}
+
+	// Build the command using the provider
+	cmd, err := provider.BuildCommand(ctx, cfg, prompt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build agent command: %w", err)
 	}
 
 	// Set working directory
@@ -239,7 +250,10 @@ func (a *Agent) Wait(ctx context.Context) (*AgentResult, error) {
 
 // Kill forcefully terminates the agent process
 func (a *Agent) Kill() error {
-	if a.cmd.Process != nil {
+	if a.cmd != nil && a.cmd.Process != nil {
+		// Log kill attempt for observability (vc-246)
+		fmt.Printf("Agent kill: issue=%s agent_id=%s pid=%d\n",
+			a.config.Issue.ID, a.config.AgentID, a.cmd.Process.Pid)
 		return a.cmd.Process.Kill()
 	}
 	return nil
@@ -471,57 +485,6 @@ func shouldSkipTool(toolName string) bool {
 	}
 
 	return internalTools[toolName]
-}
-
-// buildClaudeCodeCommand constructs the Claude Code CLI command
-func buildClaudeCodeCommand(cfg AgentConfig, prompt string) *exec.Cmd {
-	// Get Claude CLI path from environment, default to standard location
-	// VC_CLAUDE_PATH allows users to override if Claude is installed elsewhere
-	claudePath := os.Getenv("VC_CLAUDE_PATH")
-	if claudePath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			// Fallback if we can't get home directory
-			claudePath = "claude"
-		} else {
-			claudePath = filepath.Join(home, ".claude", "local", "claude")
-		}
-	}
-
-	// Get additional Claude args from environment
-	// VC_CLAUDE_ARGS allows users to customize (e.g., remove --dangerously-skip-permissions, add --model, etc.)
-	// Default: --dangerously-skip-permissions for autonomous operation (vc-117)
-	argsEnv := os.Getenv("VC_CLAUDE_ARGS")
-	if argsEnv == "" {
-		argsEnv = "--dangerously-skip-permissions"
-	}
-
-	// Build command arguments
-	args := strings.Fields(argsEnv)
-	args = append(args, prompt)
-
-	return exec.Command(claudePath, args...)
-}
-
-// buildAmpCommand constructs the Sourcegraph amp CLI command
-func buildAmpCommand(cfg AgentConfig, prompt string) *exec.Cmd {
-	args := []string{}
-
-	// Always bypass permission checks for autonomous agent operation (vc-117)
-	// This is required for VC to operate autonomously without human intervention
-	// Safe because:
-	// 1. When sandboxed: Isolated environment with no risk to main codebase
-	// 2. When not sandboxed: VC is designed to work autonomously on its own codebase
-	//    and the results go through quality gates before being committed
-	args = append(args, "--dangerously-allow-all")
-
-	// amp requires --execute for single-shot execution mode
-	args = append(args, "--execute", prompt)
-	if cfg.StreamJSON {
-		args = append(args, "--stream-json")
-	}
-
-	return exec.Command("amp", args...)
 }
 
 // GetOutput returns a copy of the current output

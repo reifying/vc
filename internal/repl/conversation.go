@@ -24,7 +24,44 @@ const (
 	MaxConversationIterations = 10
 )
 
-// ConversationHandler handles AI conversations
+// ConversationHandler handles AI conversations with function calling support
+//
+// DESIGN NOTE: Why ConversationHandler uses direct Anthropic client instead of ai.AIProvider
+//
+// The REPL's conversational interface requires function calling (tool use), which is fundamentally
+// different from the simple prompt/response pattern used by assessment, analysis, and code review.
+//
+// Function calling requires:
+// 1. Defining custom tools with JSON schemas (create_issue, continue_execution, get_ready_work, etc.)
+// 2. Multi-turn conversation loops where the AI calls tools and processes results
+// 3. Processing tool use blocks from the API response
+// 4. Returning tool results as messages back to the AI
+// 5. Managing conversation history across multiple turns
+//
+// The current ai.AIProvider interface is designed for simple prompt/response operations:
+//   Invoke(ctx, prompt) -> (text, tokens, error)
+//
+// Extending AIProvider to support function calling would require:
+// - Tool definition abstractions
+// - Multi-turn conversation state management
+// - Tool execution callbacks
+// - Response parsing for tool use blocks
+//
+// Additionally, Claude CLI doesn't support custom function calling - it only has built-in
+// tools (Bash, Edit, Read, etc.) that are specific to Claude Code's agent mode. The REPL's
+// tools (create_issue, continue_execution, etc.) are VC-specific business logic that must
+// run in the Go process, not in the CLI.
+//
+// Therefore, ConversationHandler continues to use the Anthropic SDK directly for these reasons:
+// 1. Function calling is API-specific (not available in Claude CLI)
+// 2. REPL is user-facing and interactive (caching benefits of CLI are less critical)
+// 3. Abstracting function calling would add significant complexity for limited benefit
+// 4. Assessment/analysis/code review already benefit from AIProvider abstraction
+//
+// If we need CLI support for REPL in the future, we would need to:
+// - Design a separate ToolCallProvider interface
+// - Find a way to bridge VC tools with Claude CLI's built-in tools
+// - Handle conversation state management across CLI invocations
 type ConversationHandler struct {
 	client  *anthropic.Client
 	model   string
@@ -34,6 +71,18 @@ type ConversationHandler struct {
 }
 
 // NewConversationHandler creates a new conversation handler
+//
+// NOTE: This constructor creates a direct Anthropic client instead of using ai.AIProvider
+// because the REPL requires function calling (tool use), which is not supported by the
+// current AIProvider abstraction. See the ConversationHandler type comment for details.
+//
+// The Anthropic API client is used directly to enable:
+// - Custom tool definitions (create_issue, continue_execution, etc.)
+// - Multi-turn tool use conversations
+// - Tool result processing
+//
+// This is intentional and should not be "fixed" to use AIProvider unless/until we extend
+// the provider interface to support function calling.
 func NewConversationHandler(store storage.Storage, actor string) (*ConversationHandler, error) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {

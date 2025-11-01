@@ -5,22 +5,19 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/steveyegge/vc/internal/ai"
 )
 
 // MessageGenerator generates commit messages using AI.
 type MessageGenerator struct {
-	client        *anthropic.Client
-	model         string
+	provider      ai.AIProvider
 	retryAttempts int
 }
 
 // NewMessageGenerator creates a new MessageGenerator.
-func NewMessageGenerator(client *anthropic.Client, model string) *MessageGenerator {
+func NewMessageGenerator(provider ai.AIProvider) *MessageGenerator {
 	return &MessageGenerator{
-		client:        client,
-		model:         model,
+		provider:      provider,
 		retryAttempts: 3,
 	}
 }
@@ -29,33 +26,22 @@ func NewMessageGenerator(client *anthropic.Client, model string) *MessageGenerat
 func (m *MessageGenerator) GenerateCommitMessage(ctx context.Context, req CommitMessageRequest) (*CommitMessageResponse, error) {
 	prompt := m.buildPrompt(req)
 
-	var response *anthropic.Message
+	var result *ai.InvokeResult
 	err := m.retryWithBackoff(ctx, "commit-message", func(attemptCtx context.Context) error {
-		resp, apiErr := m.client.Messages.New(attemptCtx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(m.model),
+		res, providerErr := m.provider.Invoke(attemptCtx, ai.InvokeParams{
+			Operation: "commit-message",
+			Prompt:    prompt,
 			MaxTokens: 2048,
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
-			},
 		})
-		if apiErr != nil {
-			return apiErr
-		}
-		response = resp
-		return nil
+		result = res
+		return providerErr
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate commit message: %w", err)
 	}
 
-	// Extract text from response
-	var responseText string
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			responseText += block.Text
-		}
-	}
+	responseText := result.Text
 
 	// Parse the JSON response
 	parseResult := ai.Parse[CommitMessageResponse](responseText, ai.ParseOptions{

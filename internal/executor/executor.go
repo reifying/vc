@@ -30,6 +30,9 @@ type Executor struct {
 	watchdogConfig *watchdog.WatchdogConfig
 	sandboxMgr     sandbox.Manager
 	healthRegistry *health.MonitorRegistry
+	gitOps         git.GitOperations          // Git operations for auto-commit (vc-136)
+	messageGen     *git.MessageGenerator      // Commit message generator (vc-136)
+	deduplicator   deduplication.Deduplicator // Deduplicator for discovered issues
 	config         *Config
 	instanceID     string
 	hostname       string
@@ -57,6 +60,7 @@ type Executor struct {
 	enableSandboxes        bool
 	enableHealthMonitoring bool
 	workingDir             string
+	agentProvider          string // Agent provider type: "amp" or "claude-code"
 
 	// State
 	mu      sync.RWMutex
@@ -71,6 +75,8 @@ type Config struct {
 	HeartbeatPeriod        time.Duration
 	CleanupInterval        time.Duration                // How often to check for stale instances (default: 5 minutes)
 	StaleThreshold         time.Duration                // How long before an instance is considered stale (default: 5 minutes)
+	AIProvider             string                       // AI provider: "api" (Anthropic API) or "cli" (Claude CLI), empty = from VC_AI_PROVIDER env var or "api"
+	AgentProvider          string                       // Agent provider: "amp" or "claude-code", empty = from VC_AGENT_PROVIDER env var or "amp"
 	EnableAISupervision    bool                         // Enable AI assessment and analysis (default: true)
 	EnableQualityGates     bool                         // Enable quality gates enforcement (default: true)
 	EnableSandboxes        bool                         // Enable sandbox isolation (default: false)
@@ -101,6 +107,8 @@ func DefaultConfig() *Config {
 		StaleThreshold:         5 * time.Minute,
 		InstanceCleanupAge:     24 * time.Hour,
 		InstanceCleanupKeep:    10,
+		AIProvider:             os.Getenv("VC_AI_PROVIDER"),    // "api", "cli", or empty (defaults to "api" in supervisor)
+		AgentProvider:          os.Getenv("VC_AGENT_PROVIDER"), // "amp", "claude-code", or empty (defaults to "amp")
 		EnableAISupervision:    true,
 		EnableQualityGates:     true,
 		EnableSandboxes:        false,
@@ -170,6 +178,12 @@ func New(cfg *Config) (*Executor, error) {
 		instanceCleanupKeep = 10
 	}
 
+	// Default agent provider to amp if not specified
+	agentProvider := cfg.AgentProvider
+	if agentProvider == "" {
+		agentProvider = "amp"
+	}
+
 	e := &Executor{
 		store:               cfg.Store,
 		config:              cfg,
@@ -186,6 +200,7 @@ func New(cfg *Config) (*Executor, error) {
 		enableQualityGates:  cfg.EnableQualityGates,
 		enableSandboxes:     cfg.EnableSandboxes,
 		workingDir:          workingDir,
+		agentProvider:       agentProvider,
 		stopCh:              make(chan struct{}),
 		doneCh:              make(chan struct{}),
 		cleanupStopCh:       make(chan struct{}),
@@ -208,31 +223,47 @@ func New(cfg *Config) (*Executor, error) {
 		}
 	}
 
-	// Initialize sandbox manager if enabled
-	if cfg.EnableSandboxes {
-		// Create deduplicator if we have a supervisor (vc-148)
-		var dedup deduplication.Deduplicator
-		if e.supervisor != nil {
-			// Get deduplication config from executor config or use defaults
-			dedupConfig := deduplication.DefaultConfig()
-			if cfg.DeduplicationConfig != nil {
-				dedupConfig = *cfg.DeduplicationConfig
-			}
+	// Initialize git operations for auto-commit (vc-136)
+	// This is required for auto-commit, test coverage analysis, and code quality analysis
+	gitOps, err := git.NewGit(context.Background())
+	if err != nil {
+		// Don't fail - just log warning and continue without git operations
+		fmt.Fprintf(os.Stderr, "Warning: failed to initialize git operations: %v (auto-commit disabled)\n", err)
+	} else {
+		e.gitOps = gitOps
+	}
 
-			var err error
-			dedup, err = deduplication.NewAIDeduplicator(e.supervisor, cfg.Store, dedupConfig)
-			if err != nil {
-				// Don't fail - just continue without deduplication
-				fmt.Fprintf(os.Stderr, "Warning: failed to create deduplicator: %v (continuing without deduplication)\n", err)
-				dedup = nil
-			}
+	// Initialize message generator for auto-commit (vc-136)
+	// Only if we have AI supervisor (need provider for AI-generated messages)
+	if e.supervisor != nil {
+		e.messageGen = git.NewMessageGenerator(e.supervisor.Provider())
+	}
+
+	// Create deduplicator if we have a supervisor (vc-137, vc-148)
+	// Shared by both sandbox manager and results processor
+	if e.supervisor != nil {
+		// Get deduplication config from executor config or use defaults
+		dedupConfig := deduplication.DefaultConfig()
+		if cfg.DeduplicationConfig != nil {
+			dedupConfig = *cfg.DeduplicationConfig
 		}
 
+		var err error
+		e.deduplicator, err = deduplication.NewAIDeduplicator(e.supervisor, cfg.Store, dedupConfig)
+		if err != nil {
+			// Don't fail - just continue without deduplication
+			fmt.Fprintf(os.Stderr, "Warning: failed to create deduplicator: %v (continuing without deduplication)\n", err)
+			e.deduplicator = nil
+		}
+	}
+
+	// Initialize sandbox manager if enabled
+	if cfg.EnableSandboxes {
 		sandboxMgr, err := sandbox.NewManager(sandbox.Config{
 			SandboxRoot:         sandboxRoot,
 			ParentRepo:          parentRepo,
 			MainDB:              cfg.Store,
-			Deduplicator:        dedup, // Pass deduplicator for sandbox merge deduplication
+			Deduplicator:        e.deduplicator, // Use shared deduplicator (vc-137)
 			DeduplicationConfig: cfg.DeduplicationConfig,
 			PreserveOnFailure:   cfg.KeepSandboxOnFailure, // Preserve failed sandboxes for debugging (vc-134)
 			KeepBranches:        cfg.KeepBranches,         // Keep mission branches after cleanup (vc-134)
@@ -774,8 +805,11 @@ func (e *Executor) executeIssue(ctx context.Context, issue *types.Issue) error {
 	// Generate a unique agent ID for this execution
 	agentID := uuid.New().String()
 
+	// Map agent provider string to AgentType for backward compatibility
+	agentType := AgentType(e.agentProvider)
+
 	agentCfg := AgentConfig{
-		Type:       AgentTypeClaudeCode, // Changed from AgentTypeAmp to use Claude Code
+		Type:       agentType, // Use configured agent provider (amp or claude-code)
 		WorkingDir: workingDir,
 		Issue:      issue,
 		StreamJSON: true, // Enable --stream-json for structured events (vc-236)
@@ -845,32 +879,15 @@ func (e *Executor) executeIssue(ctx context.Context, issue *types.Issue) error {
 		fmt.Sprintf("Starting results processing for issue %s", issue.ID),
 		map[string]interface{}{})
 
-	// Create deduplicator if AI supervision is enabled (vc-145)
-	var dedup deduplication.Deduplicator
-	if e.supervisor != nil {
-		// Get deduplication config from executor config or use defaults
-		dedupConfig := deduplication.DefaultConfig()
-		if e.config != nil && e.config.DeduplicationConfig != nil {
-			dedupConfig = *e.config.DeduplicationConfig
-		}
-
-		var err error
-		dedup, err = deduplication.NewAIDeduplicator(e.supervisor, e.store, dedupConfig)
-		if err != nil {
-			// Log warning but continue without deduplication (fail-safe behavior)
-			e.logEvent(ctx, events.EventTypeError, events.SeverityWarning, issue.ID,
-				fmt.Sprintf("Failed to create deduplicator: %v (continuing without deduplication)", err),
-				map[string]interface{}{"error": err.Error()})
-			dedup = nil
-		}
-	}
-
 	processor, err := NewResultsProcessor(&ResultsProcessorConfig{
 		Store:              e.store,
 		Supervisor:         e.supervisor,
-		Deduplicator:       dedup,
+		Deduplicator:       e.deduplicator, // Use shared deduplicator (vc-137)
+		GitOps:             e.gitOps,       // Pass git operations for auto-commit (vc-136)
+		MessageGen:         e.messageGen,   // Pass message generator for auto-commit (vc-136)
 		EnableQualityGates: e.enableQualityGates,
-		WorkingDir:         workingDir, // Use sandbox path if sandboxing is enabled (vc-117)
+		EnableAutoCommit:   true,          // Enable auto-commit if gitOps and messageGen are available
+		WorkingDir:         workingDir,    // Use sandbox path if sandboxing is enabled (vc-117)
 		Actor:              e.instanceID,
 		Sandbox:            sb, // Pass sandbox for status tracking (vc-134)
 	})

@@ -191,6 +191,10 @@ func TestDetectAnomalies_NoTelemetry(t *testing.T) {
 }
 
 func TestDetectAnomalies_WithTelemetry(t *testing.T) {
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("Skipping test: ANTHROPIC_API_KEY is required for API provider")
+	}
+
 	monitor := NewMonitor(nil)
 	supervisor := createTestSupervisor(t)
 	store := &mockStorage{}
@@ -244,6 +248,10 @@ func TestDetectAnomalies_WithTelemetry(t *testing.T) {
 }
 
 func TestDetectAnomalies_WithCurrentExecution(t *testing.T) {
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("Skipping test: ANTHROPIC_API_KEY is required for API provider")
+	}
+
 	monitor := NewMonitor(nil)
 	supervisor := createTestSupervisor(t)
 	store := &mockStorage{}
