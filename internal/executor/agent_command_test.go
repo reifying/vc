@@ -32,9 +32,9 @@ func TestBuildClaudeCodeCommand_WithoutSandbox(t *testing.T) {
 		t.Fatal("Expected at least one argument (command name)")
 	}
 
-	// Should have command name, permission flag, and prompt (vc-117: always bypass for autonomous operation)
-	if len(cmd.Args) != 3 {
-		t.Errorf("Expected 3 args [command, flag, prompt], got %d: %v", len(cmd.Args), cmd.Args)
+	// Should have command name, --print flag, permission flag, and prompt (vc-117: always bypass for autonomous operation)
+	if len(cmd.Args) != 4 {
+		t.Errorf("Expected 4 args [command, --print, --dangerously-skip-permissions, prompt], got %d: %v", len(cmd.Args), cmd.Args)
 	}
 
 	// Check the prompt is the last argument
@@ -78,9 +78,9 @@ func TestBuildClaudeCodeCommand_WithSandbox(t *testing.T) {
 		t.Fatal("Expected at least one argument (command name)")
 	}
 
-	// Should have command name, permission flag, and prompt (3 args total)
-	if len(cmd.Args) != 3 {
-		t.Errorf("Expected 3 args [command, flag, prompt], got %d: %v", len(cmd.Args), cmd.Args)
+	// Should have command name, --print flag, permission flag, and prompt (4 args total)
+	if len(cmd.Args) != 4 {
+		t.Errorf("Expected 4 args [command, --print, --dangerously-skip-permissions, prompt], got %d: %v", len(cmd.Args), cmd.Args)
 	}
 
 	// Check the prompt is the last argument

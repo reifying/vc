@@ -147,8 +147,9 @@ func TestEventCleanupMetricsLogging(t *testing.T) {
 		t.Errorf("expected event type %s, got %s", events.EventTypeEventCleanupCompleted, event.Type)
 	}
 
-	if event.IssueID != "SYSTEM" {
-		t.Errorf("expected issue_id 'SYSTEM', got %s", event.IssueID)
+	// System-level events use empty string for IssueID (stores as NULL to avoid FK constraint - vc-100)
+	if event.IssueID != "" {
+		t.Errorf("expected issue_id to be empty (system event), got %s", event.IssueID)
 	}
 
 	if event.ExecutorID != executor.instanceID {
@@ -422,8 +423,9 @@ func TestLogCleanupEvent(t *testing.T) {
 	event := cleanupEvents[0]
 
 	// Verify all fields
-	if event.IssueID != "SYSTEM" {
-		t.Errorf("expected SYSTEM issue_id, got %s", event.IssueID)
+	// System-level events use empty string for IssueID (stores as NULL to avoid FK constraint - vc-100)
+	if event.IssueID != "" {
+		t.Errorf("expected empty issue_id (system event), got %s", event.IssueID)
 	}
 
 	if event.Severity != events.SeverityInfo {
