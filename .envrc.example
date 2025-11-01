@@ -1,0 +1,305 @@
+# VC Environment Configuration
+#
+# This file configures environment variables for the VC AI-supervised issue workflow.
+# It works with direnv (https://direnv.net/), which automatically loads these variables
+# when you enter the vc directory.
+#
+# Installation:
+#   1. Install direnv: https://direnv.net/docs/installation.html
+#   2. Hook it into your shell: https://direnv.net/docs/hook.html
+#   3. Run `direnv allow` to load these variables
+#
+# Once set up, cd to this directory and the variables will be automatically exported.
+# This avoids the need to manually source the file.
+
+# ============================================================================
+# Required Credentials
+# ============================================================================
+
+# ANTHROPIC_API_KEY: Your Anthropic API key for AI supervision features
+# Required when: Using Anthropic API provider (VC_AI_PROVIDER=api or default)
+# Get it from: https://console.anthropic.com/
+# Example: export ANTHROPIC_API_KEY=sk-ant-v0-...
+#export ANTHROPIC_API_KEY=
+
+# ============================================================================
+# Storage Configuration
+# ============================================================================
+
+# VC_DB_PATH: Custom path to the VC SQLite database
+# Default: .beads/vc.db (in the project root)
+# Change this if you want to use a different database location
+# Example: export VC_DB_PATH=/tmp/vc.db
+#export VC_DB_PATH=.beads/vc.db
+
+# ============================================================================
+# AI Provider Selection (vc-117: Adapter Configuration)
+# ============================================================================
+
+# VC_AI_PROVIDER: Choose between Anthropic API or Claude CLI
+# Options:
+#   - "api"      Use Anthropic API directly (requires ANTHROPIC_API_KEY)
+#   - "cli"      Use Claude CLI (must be installed and available in PATH)
+# Default: "api" (uses Anthropic API with ANTHROPIC_API_KEY)
+# Set to "cli" to use: `claude` command from your system
+#export VC_AI_PROVIDER=api
+
+# VC_AI_MODEL: Model name for AI provider
+# For API provider ("api"):
+#   - Default: claude-sonnet-4-5-20250929 (latest frontier model)
+#   - Other options: claude-opus-4-1-20250805, claude-haiku-4-5-20251001, etc.
+# For CLI provider ("cli"):
+#   - Default: sonnet (uses model configured in Claude CLI)
+#   - Depends on Claude CLI configuration
+#export VC_AI_MODEL=claude-sonnet-4-5-20250929
+
+# ============================================================================
+# Agent Provider Selection (vc-117: Adapter Configuration)
+# ============================================================================
+
+# VC_AGENT_PROVIDER: Choose between Sourcegraph Amp or Claude Code
+# Options:
+#   - "amp"          Use Sourcegraph Amp (native agent, requires amp binary)
+#   - "claude-code"  Use Claude Code CLI (more general-purpose CLI)
+# Default: "amp" (uses Sourcegraph Amp for coding tasks)
+#export VC_AGENT_PROVIDER=amp
+
+# ============================================================================
+# Claude Code Provider Configuration (vc-117: Adapter Configuration)
+# ============================================================================
+
+# VC_CLAUDE_PATH: Custom path to Claude CLI binary
+# Default: ~/.claude/local/claude (standard installation location)
+# Only needed if:
+#   - Claude is installed in a non-standard location
+#   - You want to use a different version/build of Claude
+#   - You have multiple Claude installations
+# Example: export VC_CLAUDE_PATH=/opt/custom/claude
+# Example: export VC_CLAUDE_PATH=~/src/claude/claude (for development builds)
+#export VC_CLAUDE_PATH=
+
+# VC_CLAUDE_ARGS: Custom command-line arguments for Claude CLI
+# Default: --dangerously-skip-permissions (allows autonomous operation)
+# Common customizations:
+#   - Add --model: export VC_CLAUDE_ARGS="--model opus --dangerously-skip-permissions"
+#   - Remove permissions bypass: export VC_CLAUDE_ARGS="" (requires interactive approval)
+#   - Add verbose logging: export VC_CLAUDE_ARGS="--verbose --dangerously-skip-permissions"
+# Note: --print flag (non-interactive mode) is always added automatically
+# Note: --output-format=stream-json is added if configured for event streaming
+#export VC_CLAUDE_ARGS=--dangerously-skip-permissions
+
+# ============================================================================
+# Watchdog Configuration (vc-72: Watchdog Implementation)
+# ============================================================================
+
+# VC_WATCHDOG_ENABLED: Enable/disable the watchdog
+# Options: true, false, 1, 0, yes, no, on, off
+# Default: true (watchdog monitors for stuck agents)
+# Set to false to disable watchdog monitoring
+#export VC_WATCHDOG_ENABLED=true
+
+# VC_WATCHDOG_CHECK_INTERVAL: How often the watchdog checks for anomalies
+# Format: duration string (e.g., 30s, 1m, 5m)
+# Default: 30s (check every 30 seconds)
+# Useful for tuning:
+#   - Faster (e.g., 10s): More responsive to anomalies, higher CPU usage
+#   - Slower (e.g., 60s): Lower CPU usage, slower to detect problems
+# Constraints: Must be between 5s and 5m
+#export VC_WATCHDOG_CHECK_INTERVAL=30s
+
+# VC_WATCHDOG_TELEMETRY_WINDOW: Number of recent executions to analyze
+# Default: 100 (keep 100 most recent executions for pattern analysis)
+# Higher values: Better pattern detection but more memory usage
+# Lower values: Less memory, but may miss gradual degradation patterns
+# Constraints: Must be between 1 and 10000
+#export VC_WATCHDOG_TELEMETRY_WINDOW=100
+
+# VC_WATCHDOG_MAX_HISTORY: Maximum interventions to keep in memory
+# Default: 100 (remember last 100 interventions)
+# Used for: Intervention history, performance analysis, debugging
+# Constraints: Must be between 1 and 10000
+#export VC_WATCHDOG_MAX_HISTORY=100
+
+# VC_WATCHDOG_MIN_CONFIDENCE: Minimum confidence for anomaly detection
+# Format: float between 0.0 and 1.0
+# Default: 0.75 (75% - conservative, requires strong evidence)
+# Higher values (e.g., 0.9): Only act on very confident detections (fewer false positives)
+# Lower values (e.g., 0.5): Act on weaker signals (more responsive, but more false positives)
+#export VC_WATCHDOG_MIN_CONFIDENCE=0.75
+
+# VC_WATCHDOG_MIN_SEVERITY: Minimum anomaly severity to trigger intervention
+# Options: low, medium, high, critical
+# Default: high (only intervene on high/critical anomalies)
+# Useful for tuning aggressiveness:
+#   - "critical": Only the most severe problems trigger intervention
+#   - "high": High and critical problems trigger intervention
+#   - "medium": Medium, high, and critical problems trigger intervention
+#   - "low": All detected anomalies (most aggressive)
+#export VC_WATCHDOG_MIN_SEVERITY=high
+
+# VC_WATCHDOG_LOG_ANOMALIES: Enable detailed anomaly logging
+# Options: true, false, 1, 0, yes, no, on, off
+# Default: true (log all anomaly detections)
+# Useful for: Debugging watchdog behavior, analyzing patterns, tuning thresholds
+#export VC_WATCHDOG_LOG_ANOMALIES=true
+
+# VC_WATCHDOG_AUTO_KILL: Allow watchdog to automatically kill stuck agents
+# Options: true, false, 1, 0, yes, no, on, off
+# Default: true (watchdog can kill agents)
+# If false: Watchdog can only create escalation issues, not kill agents
+# Safety consideration: Set to false to be more conservative
+#export VC_WATCHDOG_AUTO_KILL=true
+
+# VC_WATCHDOG_MAX_RETRIES: Maximum retry attempts before marking issue as blocked
+# Format: integer >= 0 (0 = unlimited retries)
+# Default: 3 (retry up to 3 times before giving up)
+# Useful for tuning:
+#   - Higher (e.g., 5): More resilient, allow more retry attempts
+#   - Lower (e.g., 1): Fail fast, escalate quickly
+#export VC_WATCHDOG_MAX_RETRIES=3
+
+# VC_WATCHDOG_ESCALATE_CRITICAL: Create escalation issues for critical anomalies
+# Options: true, false, 1, 0, yes, no, on, off
+# Default: true (automatically escalate critical issues)
+# Set to false to prevent automatic escalation (requires manual review)
+#export VC_WATCHDOG_ESCALATE_CRITICAL=true
+
+# ============================================================================
+# Deduplication Configuration (vc-159: Deduplication Metrics & Performance)
+# ============================================================================
+
+# VC_DEDUP_CONFIDENCE_THRESHOLD: Minimum confidence to mark as duplicate
+# Format: float between 0.0 and 1.0
+# Default: 0.85 (85% - high confidence required)
+# Higher values (e.g., 0.95): Conservative (fewer false positives, more duplicates filed)
+# Lower values (e.g., 0.75): Aggressive (more false positives, fewer duplicates filed)
+# Trade-offs:
+#   - 0.95: Very safe, mostly only obvious duplicates are caught
+#   - 0.85: Good balance (default)
+#   - 0.75: More aggressive, may catch semantically similar issues
+#export VC_DEDUP_CONFIDENCE_THRESHOLD=0.85
+
+# VC_DEDUP_LOOKBACK_DAYS: How many days back to search for duplicates
+# Format: integer (days), between 1 and 90
+# Default: 7 (look at issues from the past 7 days)
+# Useful for tuning:
+#   - Shorter (e.g., 3): Faster dedup, only recent issues, may miss old duplicates
+#   - Longer (e.g., 14): Slower dedup, catches duplicates from older issues
+# Trade-offs: Longer lookback = slower dedup, more API calls
+#export VC_DEDUP_LOOKBACK_DAYS=7
+
+# VC_DEDUP_MAX_CANDIDATES: Maximum issues to compare against
+# Format: integer, between 0 and 500
+# Default: 25 (compare against up to 25 recent issues, optimized for performance)
+# Useful for tuning:
+#   - Lower (e.g., 10): Fewer comparisons, faster dedup, may miss duplicates
+#   - Higher (e.g., 50): More comparisons, slower dedup, more accurate
+# Performance impact: Higher values increase API costs and dedup time
+#export VC_DEDUP_MAX_CANDIDATES=25
+
+# VC_DEDUP_BATCH_SIZE: Number of comparisons per AI API call
+# Format: integer, between 1 and 100
+# Default: 50 (50 comparisons per API call, optimized for efficiency)
+# Useful for tuning:
+#   - Lower (e.g., 10): More API calls, less data per call
+#   - Higher (e.g., 100): Fewer API calls, more data per call
+# Impact: Default (50) reduces API calls by 80% vs old default (10)
+#export VC_DEDUP_BATCH_SIZE=50
+
+# VC_DEDUP_WITHIN_BATCH: Enable deduplication within candidate batch
+# Options: true, false, 1, 0, yes, no, on, off
+# Default: true (prevent filing multiple identical issues in same batch)
+# If false: Only deduplicate against existing issues, not within new batch
+#export VC_DEDUP_WITHIN_BATCH=true
+
+# VC_DEDUP_FAIL_OPEN: File issue if deduplication fails
+# Options: true, false, 1, 0, yes, no, on, off
+# Default: true (file issue on dedup failure - prefer duplicates over lost work)
+# If false: Return error and block issue creation on dedup failure
+# Safety consideration: true is safer (nothing gets lost)
+#export VC_DEDUP_FAIL_OPEN=true
+
+# VC_DEDUP_INCLUDE_CLOSED: Include recently closed issues in duplicate checks
+# Options: true, false, 1, 0, yes, no, on, off
+# Default: false (only check against open issues)
+# Set to true if you want to prevent re-filing recently closed issues
+#export VC_DEDUP_INCLUDE_CLOSED=false
+
+# VC_DEDUP_MIN_TITLE_LENGTH: Minimum title length for deduplication
+# Format: integer characters, between 0 and 500
+# Default: 10 (skip dedup for very short titles)
+# Reasoning: Very short titles lack semantic meaning (e.g., "Fix bug")
+# Useful for tuning:
+#   - Higher (e.g., 20): Only dedup issues with meaningful titles
+#   - Lower (e.g., 5): Dedup even short titles
+#export VC_DEDUP_MIN_TITLE_LENGTH=10
+
+# VC_DEDUP_MAX_RETRIES: Retry attempts for deduplication AI calls
+# Format: integer, between 0 and 10
+# Default: 2 (total 3 attempts including initial call)
+# Useful for unreliable networks:
+#   - Higher (e.g., 5): More resilient to transient failures
+#   - Lower (e.g., 0): Fail fast
+#export VC_DEDUP_MAX_RETRIES=2
+
+# VC_DEDUP_TIMEOUT_SECS: Timeout for individual AI API calls
+# Format: integer seconds, between 1 and 300
+# Default: 30 (30 second timeout per API call)
+# Useful for tuning:
+#   - Higher (e.g., 60): Give slow networks/APIs more time
+#   - Lower (e.g., 10): Fail fast on slow responses
+#export VC_DEDUP_TIMEOUT_SECS=30
+
+# ============================================================================
+# Debug Configuration
+# ============================================================================
+
+# VC_DEBUG_PROMPTS: Log full prompts sent to AI agents
+# Options: any non-empty value enables logging
+# Useful for: Debugging agent behavior, understanding what's being asked
+# Warning: Produces verbose output, may contain sensitive information
+#export VC_DEBUG_PROMPTS=
+
+# VC_DEBUG_EVENTS: Log agent progress events in detail
+# Options: any non-empty value enables logging
+# Useful for: Debugging tool usage parsing, tracking agent progress
+# Logs JSON event parsing details from agent output (Amp --stream-json format)
+#export VC_DEBUG_EVENTS=
+
+# ============================================================================
+# Example Configurations
+# ============================================================================
+
+# Example 1: Production setup with API provider
+#
+# export ANTHROPIC_API_KEY=sk-ant-v0-...
+# export VC_AI_PROVIDER=api
+# export VC_AGENT_PROVIDER=amp
+# export VC_WATCHDOG_ENABLED=true
+# export VC_WATCHDOG_MIN_SEVERITY=high
+# export VC_WATCHDOG_AUTO_KILL=true
+
+# Example 2: Development setup with Claude Code
+#
+# export ANTHROPIC_API_KEY=sk-ant-v0-...
+# export VC_AI_PROVIDER=api
+# export VC_AGENT_PROVIDER=claude-code
+# export VC_CLAUDE_PATH=~/src/claude/claude
+# export VC_CLAUDE_ARGS="--dangerously-skip-permissions"
+# export VC_DEBUG_PROMPTS=1
+# export VC_DEBUG_EVENTS=1
+
+# Example 3: Conservative watchdog (fail-safe mode)
+#
+# export VC_WATCHDOG_ENABLED=true
+# export VC_WATCHDOG_MIN_CONFIDENCE=0.9
+# export VC_WATCHDOG_MIN_SEVERITY=high
+# export VC_WATCHDOG_AUTO_KILL=false
+# export VC_WATCHDOG_ESCALATE_CRITICAL=true
+
+# Example 4: Aggressive deduplication (catch more duplicates)
+#
+# export VC_DEDUP_CONFIDENCE_THRESHOLD=0.75
+# export VC_DEDUP_LOOKBACK_DAYS=14
+# export VC_DEDUP_MAX_CANDIDATES=100
+# export VC_DEDUP_INCLUDE_CLOSED=true

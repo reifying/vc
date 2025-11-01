@@ -212,7 +212,8 @@ func New(cfg *Config) (*Executor, error) {
 	// Initialize AI supervisor if enabled (do this before sandbox manager to provide deduplicator)
 	if cfg.EnableAISupervision {
 		supervisor, err := ai.NewSupervisor(&ai.Config{
-			Store: cfg.Store,
+			Store:    cfg.Store,
+			Provider: cfg.AIProvider,
 		})
 		if err != nil {
 			// Don't fail - just disable AI supervision
