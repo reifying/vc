@@ -236,6 +236,12 @@ func (m *MockStorage) GetEventCounts(ctx context.Context) (*sqlite.EventCounts, 
 func (m *MockStorage) VacuumDatabase(ctx context.Context) error {
 	return nil
 }
+func (m *MockStorage) DeleteOldStoppedInstances(ctx context.Context, olderThanSeconds, keepCount int) (int, error) {
+	return 0, nil
+}
+func (m *MockStorage) MarkInstanceStopped(ctx context.Context, instanceID string) error {
+	return nil
+}
 
 func TestGenerateAndStorePlan_RequiresApproval(t *testing.T) {
 	ctx := context.Background()
